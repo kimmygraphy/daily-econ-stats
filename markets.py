@@ -4,6 +4,7 @@ import os
 import sys
 import time
 from datetime import date, datetime, timedelta
+from datetime import time as dtime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -14,6 +15,8 @@ KST = ZoneInfo("Asia/Seoul")
 NY = ZoneInfo("America/New_York")
 DATA_DIR = Path("data")
 OLD_LOG = DATA_DIR / "log.jsonl"
+NEXT_DAY_UNTIL = 7  # 이 시각(KST) 이전 실행은 전날 22시 몫의 재시도로 취급
+GIVE_UP_AT = dtime(5, 0)   # 이 시각까지도 기준일이 안 맞으면 최종 확정(휴장으로 간주)
 
 # (그룹, 표시 이름, Yahoo 티커, Discord 숫자 형식)
 TICKERS = [
@@ -28,6 +31,13 @@ GROUP_OF = {t[2]: t[0] for t in TICKERS}
 GROUP_LABEL = {"kr": "🇰🇷 한국", "us": "🇺🇸 미국 (전 거래일)", "fx": "💱 환율 · 금"}
 
 
+def target_date(now):
+    """실행이 지연돼 자정을 넘겼어도, 원래 몫이었던 날짜를 돌려준다."""
+    if now.hour < NEXT_DAY_UNTIL:
+        return (now - timedelta(days=1)).date()
+    return now.date()
+
+
 def prev_weekday(d):
     d -= timedelta(days=1)
     while d.weekday() >= 5:
@@ -36,12 +46,18 @@ def prev_weekday(d):
 
 
 def expected_as_of(group, today):
-    """정상 거래일이라면 기대되는 기준일. 다르면 휴장으로 본다."""
-    if group == "kr":
-        return today
+    """정상 거래일이라면 기대되는 기준일."""
     if group == "us":
         return prev_weekday(today)
-    return None  # 환율·금은 표시하지 않음
+    return today  # 코스피·코스닥·환율·금은 그날 값을 기대함
+
+
+def all_as_expected(items, target):
+    """모든 지표의 기준일이 기대한 날짜와 일치하는가 (재시도 여부 판단용)."""
+    return all(
+        it["as_of"] == expected_as_of(it["group"], target).isoformat()
+        for it in items if it["close"] is not None
+    )
 
 
 # ---------- 수집 ----------
@@ -118,20 +134,21 @@ def discord_line(item, fmt, today):
     mark = "🔴" if pct > 0 else ("🔵" if pct < 0 else "⚪")
     line = f"{mark} **{item['name']}**  {fmt.format(item['close'])}  ({pct:+.2f}%)"
     expected = expected_as_of(item["group"], today)
-    if expected and item["as_of"] != expected.isoformat():
+    if item["as_of"] != expected.isoformat():
         as_of = date.fromisoformat(item["as_of"])
         line += f"  · 휴장, {as_of.month}/{as_of.day} 기준"
     return line
 
 
 def send_discord(webhook, now, items):
+    target = target_date(now)
     fmts = {t[2]: t[3] for t in TICKERS}
     blocks, current = [], None
     for it in items:
         if it["group"] != current:
             blocks.append(f"\n**{GROUP_LABEL[it['group']]}**")
             current = it["group"]
-        blocks.append(discord_line(it, fmts[it["symbol"]], now.date()))
+        blocks.append(discord_line(it, fmts[it["symbol"]], target))
 
     weekday = "월화수목금토일"[now.weekday()]
     embed = {
@@ -147,8 +164,16 @@ def main():
     migrate_old_log()
 
     now = datetime.now(KST)
-    if now.weekday() >= 5:
-        print("주말이라 수집하지 않아요.")
+    target = target_date(now)
+    manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+
+    if target.weekday() >= 5:
+        print(f"[{target}] 주말 몫이라 수집하지 않아요.")
+        return
+
+    date_str = target.isoformat()
+    if (DATA_DIR / f"{date_str}.json").exists():
+        print(f"[{date_str}] 이미 저장됨, 종료")
         return
 
     items = []
@@ -158,12 +183,20 @@ def main():
         print(name, d)
 
     if all(it["close"] is None for it in items):
-        sys.exit("모든 지표 수집 실패")
+        if manual or now.time() >= GIVE_UP_AT:
+            sys.exit("모든 지표 수집 실패")
+        print(f"[{date_str}] 아직 데이터가 없어요, 30분 뒤 다시 시도해요.")
+        return
 
-    today = now.strftime("%Y-%m-%d")
-    write_day(today, items, now.isoformat(timespec="seconds"))
-    update_index([today])
-    print(f"[{today}] 저장 완료")
+    if not manual and now.time() < GIVE_UP_AT and not all_as_expected(items, target):
+        mismatched = [it["name"] for it in items if it["close"] is not None
+                      and it["as_of"] != expected_as_of(it["group"], target).isoformat()]
+        print(f"[{date_str}] 기준일이 아직 안 맞아요({mismatched}), 30분 뒤 다시 시도해요.")
+        return
+
+    write_day(date_str, items, now.isoformat(timespec="seconds"))
+    update_index([date_str])
+    print(f"[{date_str}] 저장 완료")
 
     webhook = os.environ.get("DISCORD_WEBHOOK_URL")
     if webhook:
