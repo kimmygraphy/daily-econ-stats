@@ -2,8 +2,8 @@ name: Daily Econ
 
 on:
   schedule:
-    - cron: "0 13 * * *"   # UTC 13:00 = KST 22:00
-  workflow_dispatch:         # Actions 탭에서 수동 실행(테스트용)
+    - cron: "0 13 * * 1-5"   # 평일 UTC 13:00 = 평일 KST 22:00
+  workflow_dispatch:           # Actions 탭에서 수동 실행(테스트용)
 
 permissions:
   contents: write
@@ -25,10 +25,10 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
-      - name: Commit log
+      - name: Commit data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
-          git add data
+          git add -A data
           git diff --staged --quiet || git commit -m "econ $(TZ=Asia/Seoul date +%F)"
           git push
