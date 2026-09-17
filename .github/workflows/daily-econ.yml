@@ -2,8 +2,10 @@ name: Daily Econ
 
 on:
   schedule:
-    - cron: "0 13 * * 1-5"   # 평일 UTC 13:00 = 평일 KST 22:00
-  workflow_dispatch:           # Actions 탭에서 수동 실행(테스트용)
+    # 평일 KST 22:05 ~ 05:05, 30분 간격 (UTC 13:05~19:35, 20:05)
+    - cron: "5,35 13-19 * * 1-6"
+    - cron: "5 20 * * 1-5"
+  workflow_dispatch:         # Actions 탭에서 수동 실행(테스트용)
 
 permissions:
   contents: write
@@ -30,5 +32,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
           git add -A data
-          git diff --staged --quiet || git commit -m "econ $(TZ=Asia/Seoul date +%F)"
-          git push
+          if ! git diff --staged --quiet; then
+            git commit -m "econ $(TZ=Asia/Seoul date +%F)"
+            git pull --rebase
+            git push
+          fi
