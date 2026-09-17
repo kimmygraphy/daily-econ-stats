@@ -1,0 +1,34 @@
+name: Daily Econ
+
+on:
+  schedule:
+    - cron: "0 13 * * *"   # UTC 13:00 = KST 22:00
+  workflow_dispatch:         # Actions 탭에서 수동 실행(테스트용)
+
+permissions:
+  contents: write
+
+jobs:
+  econ:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Fetch & notify
+        run: python markets.py
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+      - name: Commit log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add data
+          git diff --staged --quiet || git commit -m "econ $(TZ=Asia/Seoul date +%F)"
+          git push
