@@ -1,9 +1,9 @@
-"""매일 경제지표(지수·환율·금값)를 Discord로 전송 — 플래너 기록용"""
+"""평일 22시 경제지표(지수·환율·금값) → 날짜별 JSON 저장 + Discord 전송"""
 import json
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -11,23 +11,48 @@ import requests
 import yfinance as yf
 
 KST = ZoneInfo("Asia/Seoul")
-LOG_DIR = Path("data")
+NY = ZoneInfo("America/New_York")
+DATA_DIR = Path("data")
+OLD_LOG = DATA_DIR / "log.jsonl"
 
-# (그룹, 표시 이름, Yahoo 티커, 숫자 형식)
+# (그룹, 표시 이름, Yahoo 티커, Discord 숫자 형식)
 TICKERS = [
-    ("🇰🇷 한국 (오늘)", "코스피", "^KS11", "{:,.0f}"),
-    ("🇰🇷 한국 (오늘)", "코스닥", "^KQ11", "{:,.0f}"),
-    ("🇺🇸 미국 (전일)", "나스닥", "^IXIC", "{:,.0f}"),
-    ("🇺🇸 미국 (전일)", "S&P 500", "^GSPC", "{:,.0f}"),
-    ("💱 환율 · 금", "원/달러", "KRW=X", "{:,.0f}원"),
-    ("💱 환율 · 금", "금", "GC=F", "${:,.0f}"),
+    ("kr", "코스피", "^KS11", "{:,.0f}"),
+    ("kr", "코스닥", "^KQ11", "{:,.0f}"),
+    ("us", "나스닥", "^IXIC", "{:,.0f}"),
+    ("us", "S&P 500", "^GSPC", "{:,.0f}"),
+    ("fx", "원/달러", "KRW=X", "{:,.0f}원"),
+    ("fx", "금", "GC=F", "${:,.0f}"),
 ]
+GROUP_OF = {t[2]: t[0] for t in TICKERS}
+GROUP_LABEL = {"kr": "🇰🇷 한국", "us": "🇺🇸 미국 (전 거래일)", "fx": "💱 환율 · 금"}
 
 
-def fetch_one(symbol):
-    for attempt in range(3):
+def prev_weekday(d):
+    d -= timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+
+def expected_as_of(group, today):
+    """정상 거래일이라면 기대되는 기준일. 다르면 휴장으로 본다."""
+    if group == "kr":
+        return today
+    if group == "us":
+        return prev_weekday(today)
+    return None  # 환율·금은 표시하지 않음
+
+
+# ---------- 수집 ----------
+def fetch_one(group, symbol):
+    for attempt in range(1, 4):
         try:
             closes = yf.Ticker(symbol).history(period="10d", interval="1d")["Close"].dropna()
+            if group == "us":
+                # 실행이 늦어져 미국 장이 열린 뒤라도, 마감된 거래일만 사용
+                ny_today = datetime.now(NY).date()
+                closes = closes[[ts.date() < ny_today for ts in closes.index]]
             if len(closes) >= 2:
                 last, prev = float(closes.iloc[-1]), float(closes.iloc[-2])
                 return {
@@ -36,39 +61,77 @@ def fetch_one(symbol):
                     "as_of": closes.index[-1].date().isoformat(),
                 }
         except Exception as e:
-            print(f"{symbol} 시도 {attempt + 1} 실패: {e}")
+            print(f"{symbol} 시도 {attempt} 실패: {e}")
         time.sleep(5)
-    return None
+    return {"close": None, "change_pct": None, "as_of": None}
 
 
-def format_line(name, fmt, d):
-    if d is None:
-        return f"**{name}**  수집 실패"
-    pct = d["change_pct"]
+# ---------- 저장 ----------
+def write_day(date_str, items, crawled_at):
+    DATA_DIR.mkdir(exist_ok=True)
+    payload = {"date": date_str, "crawled_at": crawled_at, "items": items}
+    (DATA_DIR / f"{date_str}.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def update_index(new_dates):
+    index_path = DATA_DIR / "index.json"
+    dates = json.loads(index_path.read_text()) if index_path.exists() else []
+    index_path.write_text(json.dumps(sorted(set(dates) | set(new_dates)), indent=2))
+
+
+def migrate_old_log():
+    """예전 log.jsonl 기록을 날짜별 파일로 한 번만 변환하고 지운다 (주말 기록은 제외)."""
+    if not OLD_LOG.exists():
+        return
+    by_date = {}
+    for line in OLD_LOG.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        entry = json.loads(line)
+        if date.fromisoformat(entry["date"]).weekday() >= 5:
+            continue
+        items = []
+        for it in entry["items"]:
+            d = it.get("data") or {}
+            items.append({
+                "group": GROUP_OF.get(it["symbol"], "fx"),
+                "name": it["name"],
+                "symbol": it["symbol"],
+                "close": d.get("close"),
+                "change_pct": d.get("change_pct"),
+                "as_of": d.get("as_of"),
+            })
+        by_date[entry["date"]] = items  # 같은 날 여러 번 실행했으면 마지막 기록 사용
+    for date_str, items in by_date.items():
+        write_day(date_str, items, None)
+    update_index(by_date.keys())
+    OLD_LOG.unlink()
+    print(f"예전 기록 {len(by_date)}일치 변환 완료")
+
+
+# ---------- 전송 ----------
+def discord_line(item, fmt, today):
+    if item["close"] is None:
+        return f"**{item['name']}**  수집 실패"
+    pct = item["change_pct"]
     mark = "🔴" if pct > 0 else ("🔵" if pct < 0 else "⚪")
-    return f"{mark} **{name}**  {fmt.format(d['close'])}  ({pct:+.2f}%)"
+    line = f"{mark} **{item['name']}**  {fmt.format(item['close'])}  ({pct:+.2f}%)"
+    expected = expected_as_of(item["group"], today)
+    if expected and item["as_of"] != expected.isoformat():
+        as_of = date.fromisoformat(item["as_of"])
+        line += f"  · 휴장, {as_of.month}/{as_of.day} 기준"
+    return line
 
 
-def main():
-    now = datetime.now(KST)
-    today = now.strftime("%Y-%m-%d")
-
-    results = []
-    for group, name, symbol, fmt in TICKERS:
-        d = fetch_one(symbol)
-        results.append((group, name, symbol, fmt, d))
-        print(name, d)
-
-    if all(r[4] is None for r in results):
-        sys.exit("모든 지표 수집 실패")
-
-    # Discord 메시지: 그룹별로 묶어서 짧게
+def send_discord(webhook, now, items):
+    fmts = {t[2]: t[3] for t in TICKERS}
     blocks, current = [], None
-    for group, name, _, fmt, d in results:
-        if group != current:
-            blocks.append(f"\n**{group}**")
-            current = group
-        blocks.append(format_line(name, fmt, d))
+    for it in items:
+        if it["group"] != current:
+            blocks.append(f"\n**{GROUP_LABEL[it['group']]}**")
+            current = it["group"]
+        blocks.append(discord_line(it, fmts[it["symbol"]], now.date()))
 
     weekday = "월화수목금토일"[now.weekday()]
     embed = {
@@ -77,18 +140,35 @@ def main():
         "footer": {"text": "🔴 상승  🔵 하락 · Yahoo Finance"},
         "color": 0x2F6BFF,
     }
+    requests.post(webhook, json={"embeds": [embed]}, timeout=20).raise_for_status()
+
+
+def main():
+    migrate_old_log()
+
+    now = datetime.now(KST)
+    if now.weekday() >= 5:
+        print("주말이라 수집하지 않아요.")
+        return
+
+    items = []
+    for group, name, symbol, _ in TICKERS:
+        d = fetch_one(group, symbol)
+        items.append({"group": group, "name": name, "symbol": symbol, **d})
+        print(name, d)
+
+    if all(it["close"] is None for it in items):
+        sys.exit("모든 지표 수집 실패")
+
+    today = now.strftime("%Y-%m-%d")
+    write_day(today, items, now.isoformat(timespec="seconds"))
+    update_index([today])
+    print(f"[{today}] 저장 완료")
 
     webhook = os.environ.get("DISCORD_WEBHOOK_URL")
     if webhook:
-        requests.post(webhook, json={"embeds": [embed]}, timeout=20).raise_for_status()
+        send_discord(webhook, now, items)
         print("Discord 전송 완료")
-
-    # 가벼운 실행 기록 (저장소가 60일 이상 비활성이면 GitHub이 예약 실행을 멈추기 때문)
-    LOG_DIR.mkdir(exist_ok=True)
-    log = {"date": today, "items": [
-        {"name": n, "symbol": s, "data": d} for _, n, s, _, d in results]}
-    with open(LOG_DIR / "log.jsonl", "a", encoding="utf-8") as f:
-        f.write(json.dumps(log, ensure_ascii=False) + "\n")
 
 
 if __name__ == "__main__":
