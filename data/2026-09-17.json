@@ -1,0 +1,54 @@
+{
+  "date": "2026-09-17",
+  "crawled_at": "2026-09-17T14:21:06+09:00",
+  "items": [
+    {
+      "group": "kr",
+      "name": "코스피",
+      "symbol": "^KS11",
+      "close": 6768.37,
+      "change_pct": 0.75,
+      "as_of": "2026-09-17"
+    },
+    {
+      "group": "kr",
+      "name": "코스닥",
+      "symbol": "^KQ11",
+      "close": 825.94,
+      "change_pct": 1.22,
+      "as_of": "2026-09-17"
+    },
+    {
+      "group": "us",
+      "name": "나스닥",
+      "symbol": "^IXIC",
+      "close": 25978.43,
+      "change_pct": -0.01,
+      "as_of": "2026-09-16"
+    },
+    {
+      "group": "us",
+      "name": "S&P 500",
+      "symbol": "^GSPC",
+      "close": 7551.81,
+      "change_pct": -0.45,
+      "as_of": "2026-09-16"
+    },
+    {
+      "group": "fx",
+      "name": "원/달러",
+      "symbol": "KRW=X",
+      "close": 1382.78,
+      "change_pct": 1.41,
+      "as_of": "2026-09-17"
+    },
+    {
+      "group": "fx",
+      "name": "금",
+      "symbol": "GC=F",
+      "close": 4334.2,
+      "change_pct": -1.21,
+      "as_of": "2026-09-17"
+    }
+  ]
+}
