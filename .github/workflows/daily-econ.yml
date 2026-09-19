@@ -1,11 +1,9 @@
 name: Daily Econ
 
 on:
-  schedule:
-    # 평일 KST 22:05 ~ 05:05, 30분 간격 (UTC 13:05~19:35, 20:05)
-    - cron: "5,35 13-19 * * 1-6"
-    - cron: "5 20 * * 1-5"
-  workflow_dispatch:         # Actions 탭에서 수동 실행(테스트용)
+  repository_dispatch:
+    types: [run-econ]   # cron-job.org가 이 이벤트를 호출해서 실행시켜요
+  workflow_dispatch:      # Actions 탭에서 수동 실행(테스트용)
 
 permissions:
   contents: write
