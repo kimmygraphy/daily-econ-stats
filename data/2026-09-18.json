@@ -22,25 +22,25 @@
       "group": "us",
       "name": "나스닥",
       "symbol": "^IXIC",
-      "close": 26522.54,
-      "change_pct": 0.39,
-      "as_of": "2026-09-18"
+      "close": 26418.3,
+      "change_pct": 1.69,
+      "as_of": "2026-09-17"
     },
     {
       "group": "us",
       "name": "S&P 500",
       "symbol": "^GSPC",
-      "close": 7650.5,
-      "change_pct": 0.17,
-      "as_of": "2026-09-18"
+      "close": 7637.76,
+      "change_pct": 1.14,
+      "as_of": "2026-09-17"
     },
     {
       "group": "fx",
       "name": "원/달러",
       "symbol": "KRW=X",
-      "close": 1385.0,
-      "change_pct": 0.4,
-      "as_of": "2026-09-19"
+      "close": 1379.53,
+      "change_pct": 0.21,
+      "as_of": "2026-09-18"
     },
     {
       "group": "fx",
