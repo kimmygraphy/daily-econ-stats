@@ -45,11 +45,24 @@ def prev_weekday(d):
     return d
 
 
+def last_weekday(d):
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+
 def expected_as_of(group, today):
-    """정상 거래일이라면 기대되는 기준일."""
     if group == "us":
         return prev_weekday(today)
-    return today  # 코스피·코스닥·환율·금은 그날 값을 기대함
+    return last_weekday(today)  # 주말이면 금요일 값을 기대
+
+
+def label_expected(group, today):
+    if group == "us":
+        return prev_weekday(today)
+    if group == "kr":
+        return today
+    return None  # 환율·금은 표시하지 않음
 
 
 def all_as_expected(items, target):
@@ -133,8 +146,8 @@ def discord_line(item, fmt, today):
     pct = item["change_pct"]
     mark = "🔴" if pct > 0 else ("🔵" if pct < 0 else "⚪")
     line = f"{mark} **{item['name']}**  {fmt.format(item['close'])}  ({pct:+.2f}%)"
-    expected = expected_as_of(item["group"], today)
-    if item["as_of"] != expected.isoformat():
+    expected = label_expected(item["group"], today)
+    if expected and item["as_of"] != expected.isoformat():
         as_of = date.fromisoformat(item["as_of"])
         line += f"  · 휴장, {as_of.month}/{as_of.day} 기준"
     return line
@@ -166,10 +179,6 @@ def main():
     now = datetime.now(KST)
     target = target_date(now)
     manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
-
-    if target.weekday() >= 5:
-        print(f"[{target}] 주말 몫이라 수집하지 않아요.")
-        return
 
     date_str = target.isoformat()
     if (DATA_DIR / f"{date_str}.json").exists():
