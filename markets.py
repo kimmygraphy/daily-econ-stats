@@ -59,7 +59,7 @@ def expected_as_of(group, today):
 
 def label_expected(group, today):
     if group == "us":
-        return prev_weekday(today)
+        return today - timedelta(days=1)  # 전날 밤(미국 날짜로 전날) 장이 없었으면 휴장
     return today  # 코스피·코스닥·환율·금: 그날 값이 아니면 휴장
 
 
