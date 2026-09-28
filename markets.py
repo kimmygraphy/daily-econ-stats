@@ -60,9 +60,7 @@ def expected_as_of(group, today):
 def label_expected(group, today):
     if group == "us":
         return prev_weekday(today)
-    if group == "kr":
-        return today
-    return None  # 환율·금은 표시하지 않음
+    return today  # 코스피·코스닥·환율·금: 그날 값이 아니면 휴장
 
 
 def all_as_expected(items, target):
@@ -143,14 +141,13 @@ def migrate_old_log():
 def discord_line(item, fmt, today):
     if item["close"] is None:
         return f"**{item['name']}**  수집 실패"
-    pct = item["change_pct"]
-    mark = "🔴" if pct > 0 else ("🔵" if pct < 0 else "⚪")
-    line = f"{mark} **{item['name']}**  {fmt.format(item['close'])}  ({pct:+.2f}%)"
     expected = label_expected(item["group"], today)
     if expected and item["as_of"] != expected.isoformat():
         as_of = date.fromisoformat(item["as_of"])
-        line += f"  · 휴장, {as_of.month}/{as_of.day} 기준"
-    return line
+        return f"⚪ **{item['name']}**  {fmt.format(item['close'])}  · 휴장, {as_of.month}/{as_of.day} 기준"
+    pct = item["change_pct"]
+    mark = "🔴" if pct > 0 else ("🔵" if pct < 0 else "⚪")
+    return f"{mark} **{item['name']}**  {fmt.format(item['close'])}  ({pct:+.2f}%)"
 
 
 def send_discord(webhook, now, items):
